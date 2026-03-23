@@ -7,10 +7,8 @@ Verifica la compatibilidad entre WhatsApp instalado y el módulo WaEnhancer de X
 import subprocess
 import sys
 import requests
-import json
 import re
 import os
-import tempfile
 import webbrowser
 from typing import Optional, Dict, List, Tuple
 from packaging import version
@@ -298,6 +296,10 @@ class WaEnhancerChecker:
         apkmirror_url = "https://www.apkmirror.com/apk/whatsapp-inc/whatsapp/"
         
         return compatible_version, apkmirror_url
+
+    # Nota: la descarga automática desde APKMirror se implementa en
+    # `download_apk_from_apkmirror()` más abajo. Se usa esa función cuando
+    # está disponible la utilidad `apkmirror-downloader`.
     
     def get_whatsapp_download_links(self, version: str) -> Dict[str, str]:
         """Genera links de descarga para una versión específica de WhatsApp"""
@@ -354,6 +356,52 @@ class WaEnhancerChecker:
         except Exception as e:
             print(f"\n{Colors.RED}Error: {e}{Colors.RESET}")
             return None
+
+    def download_apk_from_apkmirror(self, version: str) -> Optional[str]:
+        """Intenta descargar un APK desde APKMirror usando la utilidad `apkmirror-downloader`.
+        Retorna la ruta del APK descargado o None si falla.
+        """
+        pkg = self.WHATSAPP_BUSINESS_PACKAGE if self.is_business else self.WHATSAPP_PACKAGE
+        print(f"\n{Colors.BLUE}Intentando descargar desde APKMirror (apkmirror-downloader)...{Colors.RESET}")
+
+        cmds = [
+            ["apkmirror-downloader", pkg, version, "--output", str(self.downloads_dir)],
+            ["apkmirror-downloader", pkg, version, "-o", str(self.downloads_dir)],
+            ["apkmirror-downloader", pkg, version],
+        ]
+
+        for cmd in cmds:
+            try:
+                print(f"{Colors.BLUE}Ejecutando: {' '.join(cmd)}{Colors.RESET}")
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    # Buscar APK descargado en downloads_dir
+                    apks = list(self.downloads_dir.glob(f"*{version}*.apk"))
+                    if not apks:
+                        apks = list(self.downloads_dir.glob("*.apk"))
+                    if apks:
+                        # escoger el más reciente por fecha de modificación
+                        apk_path = max(apks, key=lambda p: p.stat().st_mtime)
+                        print(f"{Colors.GREEN}✓ APK encontrado: {apk_path}{Colors.RESET}")
+                        return str(apk_path)
+                    else:
+                        print(f"{Colors.YELLOW}No se detectó APK en {self.downloads_dir}{Colors.RESET}")
+                else:
+                    print(f"{Colors.YELLOW}apkmirror-downloader terminó con código {result.returncode}{Colors.RESET}")
+                    if result.stdout:
+                        print(result.stdout)
+                    if result.stderr:
+                        print(result.stderr)
+
+            except FileNotFoundError:
+                print(f"{Colors.RED}apkmirror-downloader no está instalado o no está en PATH{Colors.RESET}")
+                return None
+            except subprocess.TimeoutExpired:
+                print(f"{Colors.YELLOW}apkmirror-downloader tardó demasiado y fue cancelado{Colors.RESET}")
+            except Exception as e:
+                print(f"{Colors.YELLOW}Error ejecutando apkmirror-downloader: {e}{Colors.RESET}")
+
+        return None
     
     def install_apk_via_adb(self, apk_path: str, allow_downgrade: bool = True) -> bool:
         """Instala un APK vía ADB"""
@@ -402,13 +450,39 @@ class WaEnhancerChecker:
         print(f"{Colors.BOLD}  Downgrade de WhatsApp{Colors.RESET}")
         print(f"{Colors.BOLD}{'='*60}{Colors.RESET}\n")
         
-        # Obtener versión compatible
+        # Obtener versión(es) compatibles a partir del release notes de GitHub
         compatible_version, _ = self.get_whatsapp_apk_info()
-        
-        if not compatible_version:
-            print(f"{Colors.YELLOW}No se pudo determinar versión compatible específica{Colors.RESET}")
-            print(f"Consulta: https://github.com/{self.GITHUB_REPO}/releases\n")
-            return False
+
+        # Si extract_compatible_whatsapp_versions encontró varias, permitir elegir
+        if self.compatible_versions:
+            print(f"{Colors.BLUE}Versiones detectadas en el release de WaEnhancer:{Colors.RESET}")
+            for idx, v in enumerate(self.compatible_versions, start=1):
+                print(f"  {idx}. {v}")
+
+            if len(self.compatible_versions) == 1:
+                compatible_version = self.compatible_versions[0]
+                print(f"\n{Colors.GREEN}Usando versión detectada: {compatible_version}{Colors.RESET}")
+            else:
+                choice_v = input(f"\n{Colors.BLUE}Selecciona la versión a la que quieres hacer downgrade (ENTER=1): {Colors.RESET}").strip()
+                if choice_v == "":
+                    compatible_version = self.compatible_versions[0]
+                else:
+                    try:
+                        i = int(choice_v)
+                        if 1 <= i <= len(self.compatible_versions):
+                            compatible_version = self.compatible_versions[i-1]
+                        else:
+                            print(f"{Colors.YELLOW}Selección inválida, usando la primera versión detectada{Colors.RESET}")
+                            compatible_version = self.compatible_versions[0]
+                    except ValueError:
+                        print(f"{Colors.YELLOW}Selección inválida, usando la primera versión detectada{Colors.RESET}")
+                        compatible_version = self.compatible_versions[0]
+
+        else:
+            if not compatible_version:
+                print(f"{Colors.YELLOW}No se pudo determinar versión compatible específica{Colors.RESET}")
+                print(f"Consulta: https://github.com/{self.GITHUB_REPO}/releases\n")
+                return False
         
         wa_type = "WhatsApp Business" if self.is_business else "WhatsApp"
         wa_package = self.WHATSAPP_BUSINESS_PACKAGE if self.is_business else self.WHATSAPP_PACKAGE
@@ -435,13 +509,18 @@ class WaEnhancerChecker:
         
         if choice == "1":
             # APKMirror
-            print(f"\n{Colors.GREEN}Abriendo APKMirror...{Colors.RESET}")
-            webbrowser.open(download_links["apkmirror"])
-            print(f"\n{Colors.YELLOW}Instrucciones:{Colors.RESET}")
-            print(f"  1. Busca la versión {compatible_version}")
-            print(f"  2. Descarga el APK (variant: universal o nodpi)")
-            print(f"  3. Guarda el archivo y pega la ruta aquí\n")
-            apk_path = input(f"{Colors.BLUE}Ruta del APK descargado: {Colors.RESET}").strip().strip('"')
+            print(f"\n{Colors.GREEN}Intentando descarga automática desde APKMirror...{Colors.RESET}")
+            downloaded = self.try_apkmirror_downloader(compatible_version)
+            if downloaded:
+                apk_path = downloaded
+            else:
+                print(f"\n{Colors.GREEN}No se pudo descargar automáticamente. Abriendo APKMirror en el navegador...{Colors.RESET}")
+                webbrowser.open(download_links["apkmirror"])
+                print(f"\n{Colors.YELLOW}Instrucciones:{Colors.RESET}")
+                print(f"  1. Busca la versión {compatible_version}")
+                print(f"  2. Descarga el APK (variant: universal o nodpi)")
+                print(f"  3. Guarda el archivo y pega la ruta aquí\n")
+                apk_path = input(f"{Colors.BLUE}Ruta del APK descargado: {Colors.RESET}").strip().strip('"')
         
         elif choice == "2":
             # APKPure
@@ -576,19 +655,30 @@ class WaEnhancerChecker:
         print(f"\n{Colors.YELLOW}Completado con advertencias. Verifica manualmente.{Colors.RESET}")
         return False
     
-    def compare_versions(self, installed: str, compatible: List[str]) -> bool:
-        """Compara si la versión instalada es compatible"""
+    def compare_versions(self, installed: str, compatible: List[str]) -> Optional[bool]:
+        """Compara si la versión instalada es compatible.
+
+        Retorna True si es compatible, False si no lo es, o None si no se puede determinar.
+        """
         if not compatible:
-            # Si no hay info específica, asumimos que puede ser compatible
+            # No hay información específica para comparar
             return None
-        
+
         try:
             installed_v = version.parse(installed)
+        except Exception:
+            return None
+
+        try:
             for compatible_v_str in compatible:
-                if version.parse(compatible_v_str) == installed_v:
-                    return True
+                try:
+                    if version.parse(compatible_v_str) == installed_v:
+                        return True
+                except Exception:
+                    # Ignorar versiones incompatibles para parseo
+                    continue
             return False
-        except version.InvalidVersion:
+        except Exception:
             return None
     
     def print_status(self, is_compatible: Optional[bool]):

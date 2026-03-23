@@ -63,6 +63,22 @@ cd ruta\donde\descargaste\VaEnhancerFIX
 pip install -r requirements.txt
 ```
 
+### (Opcional) Descargar APKs automáticamente desde APKMirror
+
+Si quieres que el script intente descargar APKs de WhatsApp automáticamente desde APKMirror, instala la utilidad `apkmirror-downloader`:
+
+```cmd
+pip install apkmirror-downloader
+```
+
+Una vez instalada, el script intentará usarla para bajar la versión compatible de WhatsApp automáticamente cuando elijas la opción de downgrade. Si no está instalada, el script abrirá APKMirror en el navegador y te pedirá la ruta del APK descargado manualmente.
+
+Opcional (recomendado para downgrades automáticos desde APKMirror):
+```cmd
+pip install apkmirror-downloader
+# ó incluirlo en `requirements.txt`
+```
+
 ## 💻 Uso
 
 1. **Conecta tu móvil Android por USB** con depuración USB habilitada
@@ -224,7 +240,7 @@ Para prevenir que WhatsApp se actualice automáticamente:
 
 ## 📝 Notas
 
-Este script es de solo lectura y NO modifica automáticamente tu sistema. Solo proporciona información y opciones para que tú decidas qué hacer.
+Este script es una herramienta de ayuda para usuarios de WaEnhancer que enfrentan problemas de compatibilidad tras actualizaciones de WhatsApp. No es un parche ni una modificación directa, sino un asistente para gestionar versiones y mantener la funcionalidad del módulo.
 
 ## 🤝 Contribuciones
 
